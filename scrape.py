@@ -4,11 +4,14 @@ import sys, numpy as np, re
 
 args = sys.argv
 if len(args) < 2:
-    print("Usage: python3 scrape.py <url>")
+    print("Usage: python3 scrape.py <url> [num chapters]")
     exit(1)
+
+num_chap = 0
 url = args[1]
 rr = "https://www.royalroad.com"
 title = []
+tagRemove = ["p", "span", "em", "hr"]
 
 def getPage(url):
     page = requests.get(url)
@@ -45,17 +48,22 @@ def convertList(chapter_list, num_chapters):
     
     for chapter in chapter_list:
         page = getPage(f"{rr}{chapter['url']}")
-        chapter["chapter_content"] = page.find("div", class_="chapter-inner chapter-content").text.replace("\n", "\\par\n").replace("%", "\\%").replace("\u200b", "").replace("#", "\\#").replace(u'\xa0', '')
+        
+        for tag in tagRemove:
+            for item in page.findAll(tag):
+                item.replaceWithChildren()
+        
+        con = page.find("div", class_="chapter-inner chapter-content")
+        stripped_con = [line for line in con.contents if line is not None and line != "\u200b" and line != u"\xa0"]
+        str_con = ''.join(str(line) for line in stripped_con)
+
+        chapter["chapter_content"] = str_con.replace("\u200b", "").replace(u"\xa0", "").replace("\n", "\\par\n").replace("%", "\\%").replace("#", "\\#").replace("&", "\\&").replace("<strong>", "\\textbf{").replace("</strong>", "}").replace("\\&gt;", "\\textgreater").replace("\\&lt;", "\\textless").replace("The author\'s content has been appropriated; report any instances of this story on Amazon.", "")
     return chapter_list
-
-temp = getList(url)
-chapter_list = convertList(temp, len(temp))
-
 
 def createLaTeX(chapter_list):
     latex = [t.replace("TITLE", title[0]) for t in np.loadtxt("latex_template.tex", dtype=str)]
     for chapter in chapter_list:
-        latex.insert(-1, f'\\section{{{chapter["title"]}}}')
+        latex.insert(-1, f'\\section*{{{chapter["title"]}}}\n\\addcontentsline{{toc}}{{section}}{{\\protect\\numberline{{}}{chapter["title"]}}}%')
         latex.insert(-1, f'{chapter["chapter_content"]}\n')
     
     file = open(f"{title[0]}.tex", 'w')
@@ -63,7 +71,12 @@ def createLaTeX(chapter_list):
         file.write(line+'\n')
     file.close()
 
-# def createPDF(chapter_list):
-#     file = open(f"{chapter_list["title"]}", 'r')
+temp = getList(url)
 
+if len(args) >= 3:
+    num_chap = args[2]
+else:
+    num_chap = len(temp)
+
+chapter_list = convertList(temp, num_chap)
 createLaTeX(chapter_list)
