@@ -16,7 +16,7 @@ def getPage(url):
     
 def getList(url):
     soup = getPage(url)
-    title.append(soup.title.text.split('|')[0])
+    title.append(" ".join(soup.title.text.split('|')[0].split()))
     temp = None
 
     for element in soup.select('script'):
@@ -45,13 +45,11 @@ def convertList(chapter_list, num_chapters):
     
     for chapter in chapter_list:
         page = getPage(f"{rr}{chapter['url']}")
-        contents = page.find("div", class_="chapter-inner chapter-content")
-        chapter["chapter_content"] = contents.text.replace("\n", "\\par\n").replace("%", "\\%").replace("\u200b", "").replace("#", "\\#")
+        chapter["chapter_content"] = page.find("div", class_="chapter-inner chapter-content").text.replace("\n", "\\par\n").replace("%", "\\%").replace("\u200b", "").replace("#", "\\#").replace(u'\xa0', '')
     return chapter_list
 
 temp = getList(url)
 chapter_list = convertList(temp, len(temp))
-print(chapter_list[7])
 
 
 def createLaTeX(chapter_list):
@@ -66,6 +64,6 @@ def createLaTeX(chapter_list):
     file.close()
 
 # def createPDF(chapter_list):
-#     file = open(f"{chapter_list["title"]}", 'w')
+#     file = open(f"{chapter_list["title"]}", 'r')
 
 createLaTeX(chapter_list)
