@@ -1,4 +1,4 @@
-import requests
+import requests, subprocess
 from bs4 import BeautifulSoup
 import sys, numpy as np, re
 
@@ -63,13 +63,18 @@ def convertList(chapter_list, num_chapters):
 def createLaTeX(chapter_list):
     latex = [t.replace("TITLE", title[0]) for t in np.loadtxt("latex_template.tex", dtype=str)]
     for chapter in chapter_list:
-        latex.insert(-1, f'\\section*{{{chapter["title"]}}}\n\\addcontentsline{{toc}}{{section}}{{\\protect\\numberline{{}}{chapter["title"]}}}%')
+        latex.insert(-1, f'\\section*{{{chapter["title"]}}}\n\\addcontentsline{{toc}}{{section}}{{{chapter["title"]}}}')
         latex.insert(-1, f'{chapter["chapter_content"]}\n')
     
     file = open(f"{title[0]}.tex", 'w')
     for line in latex:
         file.write(line+'\n')
     file.close()
+
+def createPDF(filename):
+    subprocess.run(['pdflatex', '-interaction=nonstopmode', f'{filename}.tex'])
+    # subprocess.run('rm *out *aux *log', shell=True)
+
 
 temp = getList(url)
 
@@ -80,3 +85,4 @@ else:
 
 chapter_list = convertList(temp, num_chap)
 createLaTeX(chapter_list)
+createPDF(title[0])
