@@ -73,7 +73,7 @@ def createLaTeX(chapter_list):
 
 def createPDF(filename):
     subprocess.run(['pdflatex', '-interaction=nonstopmode', f'{filename}.tex'])
-    # subprocess.run('rm *out *aux *log *toc', shell=True)
+    # subprocess.run('rm *out *aux *log', shell=True)
 
 
 temp = getList(url)
