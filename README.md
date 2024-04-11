@@ -10,6 +10,6 @@ This python script scrapes a given Royal Road story into a pdf-file, containing 
 To start this script run
 
 ```bash
-  python3 scrape.py <url> [number of chapters]
+  python3 scrape.py [-l] [-c] <url> [PDF title] [number of chapters]  
 ```
 This will scrape the given Royal Road fiction URL for its chapter list, and combines these chapters into a single pdf file.
