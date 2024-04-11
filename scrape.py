@@ -10,8 +10,11 @@ if len(args) < 2:
 num_chap = 0
 url = args[1]
 rr = "https://www.royalroad.com"
-title = []
 tagRemove = ["p", "span", "em", "hr"]
+replaceList = [["$", "\\$"], ["\u200b", ""], [u"\xa0", ""], ["\n", "\\par\n"], ["%", "\\%"], ["#", "\\#"], ["&", "\\&"], 
+               ["<strong>", "\\textbf{"], ["</strong>", "}"], ["\\&gt;", "\\textgreater"], ["\\&lt;", "\\textless"], 
+               ["The author\'s content has been appropriated; report any instances of this story on Amazon.", ""], 
+               ["Taken from Royal Road, this narrative should be reported if found on Amazon.", ""]]
 
 def getPage(url):
     page = requests.get(url)
@@ -19,7 +22,8 @@ def getPage(url):
     
 def getList(url):
     soup = getPage(url)
-    title.append(" ".join(soup.title.text.split('|')[0].split()))
+    global title
+    title = " ".join(soup.title.text.split('|')[0].split())
     temp = None
 
     for element in soup.select('script'):
@@ -50,14 +54,16 @@ def convertList(chapter_list, num_chapters):
             item.replaceWithChildren()
         stripped_con = [line for line in con.contents if line is not None]
         str_con = ''.join(str(line) for line in stripped_con)
-
-        chapter["chapter_content"] = str_con.replace("$", "").replace("\u200b", "").replace(u"\xa0", "").replace("\n", "\\par\n").replace("%", "\\%").replace("#", "\\#").replace("&", "\\&").replace("<strong>", "\\textbf{").replace("</strong>", "}").replace("\\&gt;", "\\textgreater").replace("\\&lt;", "\\textless").replace("The author\'s content has been appropriated; report any instances of this story on Amazon.", "").replace("Taken from Royal Road, this narrative should be reported if found on Amazon.", "")
+        for item in replaceList:
+            str_con = str_con.replace(item[0], item[1])
+        print(str_con)
+        chapter["chapter_content"] = str_con
         count += 1
 
     return chapter_list
 
 def createLaTeX(chapter_list, num_chapters):
-    latex = [t.replace("TITLE", title[0]) for t in np.loadtxt("latex_template.tex", dtype=str)]
+    latex = [t.replace("TITLE", title) for t in np.loadtxt("latex_template.tex", dtype=str)]
     count = 0
     for chapter in chapter_list:
         if count >= num_chapters:
@@ -66,14 +72,14 @@ def createLaTeX(chapter_list, num_chapters):
         latex.insert(-1, f'{chapter["chapter_content"]}\n')
         count += 1
     
-    file = open(f"{title[0]}.tex", 'w')
+    file = open(f"{title}.tex", 'w')
     for line in latex:
         file.write(line+'\n')
     file.close()
 
 def createPDF(filename):
     subprocess.run(['pdflatex', '-interaction=nonstopmode', f'{filename}.tex'])
-    # subprocess.run('rm *out *aux *log', shell=True)
+    subprocess.run('rm *out *aux *log', shell=True)
 
 temp = getList(url)
 
@@ -84,4 +90,4 @@ else:
 
 chapter_list = convertList(temp, num_chap)
 createLaTeX(chapter_list, num_chap)
-createPDF(title[0])
+createPDF(title)
