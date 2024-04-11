@@ -2,20 +2,6 @@ import requests, subprocess
 from bs4 import BeautifulSoup
 import sys, numpy as np, json
 
-args = sys.argv
-if len(args) < 2:
-    print("Usage: python3 scrape.py <url> [num chapters]")
-    exit(1)
-
-num_chap = 0
-url = args[1]
-rr = "https://www.royalroad.com"
-tagRemove = ["p", "span", "em", "hr"]
-replaceList = [["$", "\\$"], ["\u200b", ""], [u"\xa0", ""], ["\n", "\\par\n"], ["%", "\\%"], ["#", "\\#"], ["&", "\\&"], 
-               ["<strong>", "\\textbf{"], ["</strong>", "}"], ["\\&gt;", "\\textgreater"], ["\\&lt;", "\\textless"], 
-               ["The author\'s content has been appropriated; report any instances of this story on Amazon.", ""], 
-               ["Taken from Royal Road, this narrative should be reported if found on Amazon.", ""]]
-
 def getPage(url):
     page = requests.get(url)
     return  BeautifulSoup(page.content, 'html.parser')
@@ -35,11 +21,11 @@ def getList(url):
     if temp is None:
         print("No page found.")
         exit(1)
-        
-    return [json.loads(dic) for dic in ['{'+r+'}' for r in temp[temp.find("[")+1:temp.find("]")].split("},{")[1:-1]]]
+    return [json.loads(dic) for dic in ['{'+r+'}' for r in temp[temp.find("[")+1:temp.find("]")][1:-1].split("},{")]]
 
 def convertList(chapter_list, num_chapters):    
     count = 0
+
     for chapter in chapter_list:
         if count >= num_chapters:
             break
@@ -56,13 +42,13 @@ def convertList(chapter_list, num_chapters):
         str_con = ''.join(str(line) for line in stripped_con)
         for item in replaceList:
             str_con = str_con.replace(item[0], item[1])
-        print(str_con)
+
         chapter["chapter_content"] = str_con
         count += 1
 
     return chapter_list
 
-def createLaTeX(chapter_list, num_chapters):
+def createLaTeX(chapter_list, num_chapters, pdfTitle):
     latex = [t.replace("TITLE", title) for t in np.loadtxt("latex_template.tex", dtype=str)]
     count = 0
     for chapter in chapter_list:
@@ -81,13 +67,41 @@ def createPDF(filename):
     subprocess.run(['pdflatex', '-interaction=nonstopmode', f'{filename}.tex'])
     subprocess.run('rm *out *aux *log', shell=True)
 
-temp = getList(url)
+args = sys.argv
+if len(args) < 2:
+    print("Usage: python3 scrape.py [-l] [-n] <url> [pdf-title] [num chapters]")
+    print("\n    -l    Declare PDF output file name.")
+    print("    -c    Configure number of chapters scraped.")
+    exit(1)
 
-if len(args) >= 3:
-    num_chap = int(args[2])
-else:
-    num_chap = len(temp)
+
+num_chap = 0
+rr = "https://www.royalroad.com"
+tagRemove = ["p", "span", "em", "hr"]
+replaceList = [["$", "\\$"], ["\u200b", ""], [u"\xa0", ""], ["\n", "\\par\n"], ["%", "\\%"], ["#", "\\#"], ["&", "\\&"], 
+               ["<strong>", "\\textbf{"], ["</strong>", "}"], ["\\&gt;", "\\textgreater"], ["\\&lt;", "\\textless"], 
+               ["The author\'s content has been appropriated; report any instances of this story on Amazon.", ""], 
+               ["Taken from Royal Road, this narrative should be reported if found on Amazon.", ""]]
+
+print(args)
+if len(args) == 2:
+    url = args[1]
+elif len(args) == 4:
+    url = args[2]
+elif len(args) == 6:
+    url = args[3]
+
+temp = getList(url)
+num_chap = len(temp)
+if len(args) == 4 and args[1] == "-l":
+    title = str(args[-1])
+elif len(args) == 4 and args[1] == "-c":
+    num_chap = int(args[-1])
+elif len(args) == 6 and args[1] == "-l" and args[2] == "-c":
+    title = str(args[-2])
+    num_chap = int(args[-1])
 
 chapter_list = convertList(temp, num_chap)
-createLaTeX(chapter_list, num_chap)
+print(chapter_list)
+createLaTeX(chapter_list, num_chap, title)
 createPDF(title)
