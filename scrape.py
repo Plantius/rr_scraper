@@ -11,7 +11,6 @@ def getList(url):
     global title
     title = " ".join(soup.title.text.split('|')[0].split())
     temp = None
-
     for element in soup.select('script'):
         if "window.chapters" in element.text:
             for line in element.text.split('\n'):
@@ -21,7 +20,7 @@ def getList(url):
     if temp is None:
         print("No page found.")
         exit(1)
-    return [json.loads(dic) for dic in ['{'+r+'}' for r in temp[temp.find("[")+1:temp.find("]")][1:-1].split("},{")]]
+    return [json.loads(dic) for dic in ['{'+r+'}' for r in temp.replace("window.chapters = ", "")[2:-3].split("},{")]]
 
 def convertList(chapter_list, num_chapters):    
     count = 0
@@ -83,7 +82,6 @@ replaceList = [["$", "\\$"], ["\u200b", ""], [u"\xa0", ""], ["\n", "\\par\n"], [
                ["The author\'s content has been appropriated; report any instances of this story on Amazon.", ""], 
                ["Taken from Royal Road, this narrative should be reported if found on Amazon.", ""]]
 
-print(args)
 if len(args) == 2:
     url = args[1]
 elif len(args) == 4:
