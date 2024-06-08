@@ -76,10 +76,10 @@ if len(args) < 2:
 
 num_chap = 0
 rr = "https://www.royalroad.com"
-tagRemove = ["p", "span", "em", "hr"]
+tagRemove = ["p", "span", "em", "hr", "a"]
 replaceList = [["$", "\\$"], ["\u200b", ""], [u"\xa0", ""], ["\n", "\\par\n"], ["%", "\\%"], ["#", "\\#"], ["&", "\\&"], 
                ["<strong>", "\\textbf{"], ["</strong>", "}"], ["<sup>", "$^{"], ["</sup>", "}$"], 
-               ["<a", "%"], ["</a>", "\n"], ["\\&gt;", "\\textgreater"], ["\\&lt;", "\\textless"], 
+               ["\\&gt;", "\\textgreater"], ["\\&lt;", "\\textless"], 
                ["The author\'s content has been appropriated; report any instances of this story on Amazon.", ""], 
                ["Taken from Royal Road, this narrative should be reported if found on Amazon.", ""]]
 
