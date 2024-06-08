@@ -68,7 +68,7 @@ def createPDF(filename):
 
 args = sys.argv
 if len(args) < 2:
-    print("Usage: python3 scrape.py [-l] [-n] <url> [pdf-title] [num chapters]")
+    print("Usage: python3 scrape.py [-l] [-c] <url> [pdf-title] [num chapters]")
     print("\n    -l    Declare PDF output file name.")
     print("    -c    Configure number of chapters scraped.")
     exit(1)
@@ -78,7 +78,8 @@ num_chap = 0
 rr = "https://www.royalroad.com"
 tagRemove = ["p", "span", "em", "hr"]
 replaceList = [["$", "\\$"], ["\u200b", ""], [u"\xa0", ""], ["\n", "\\par\n"], ["%", "\\%"], ["#", "\\#"], ["&", "\\&"], 
-               ["<strong>", "\\textbf{"], ["</strong>", "}"], ["\\&gt;", "\\textgreater"], ["\\&lt;", "\\textless"], 
+               ["<strong>", "\\textbf{"], ["</strong>", "}"], ["<sup>", "$^{"], ["</sup>", "}$"], 
+               ["<a", "%"], ["</a>", "\n"], ["\\&gt;", "\\textgreater"], ["\\&lt;", "\\textless"], 
                ["The author\'s content has been appropriated; report any instances of this story on Amazon.", ""], 
                ["Taken from Royal Road, this narrative should be reported if found on Amazon.", ""]]
 
