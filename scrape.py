@@ -86,7 +86,7 @@ replaceList = [["$", "\\$"], ["\u200b", ""], [u"\xa0", ""], ["\n", "\\par\n"], [
 if len(args) == 2:
     url = args[1]
 elif len(args) == 4:
-    url = args[2]
+    url = args[3]
 elif len(args) == 6:
     url = args[3]
 
