@@ -1,106 +1,119 @@
-import requests, subprocess
+import argparse
+import requests
+import subprocess
+import json
+import numpy as np
 from bs4 import BeautifulSoup
-import sys, numpy as np, json
 
-def getPage(url):
-    page = requests.get(url)
-    return  BeautifulSoup(page.content, 'html.parser')
-    
-def getList(url):
-    soup = getPage(url)
-    global title
+BASE_URL = "https://www.royalroad.com"
+TAG_REMOVE = ["p", "span", "em", "hr", "a"]
+REPLACE_LIST = [
+    ["$", "\\$"], ["\u200b", ""], [u"\xa0", ""], ["\n", "\\par\n"], 
+    ["%", "\\%"], ["#", "\\#"], ["&", "\\&"], 
+    ["<strong>", "\\textbf{"], ["</strong>", "}"], 
+    ["<sup>", "$^{"], ["</sup>", "}$"], 
+    ["\\&gt;", "\\textgreater"], ["\\&lt;", "\\textless"], 
+    ["The author\'s content has been appropriated; report any instances of this story on Amazon.", ""], 
+    ["Taken from Royal Road, this narrative should be reported if found on Amazon.", ""],
+    ["Unauthorized usage: this narrative is on Amazon without the author’s consent. Report any sightings.", ""]
+]
+
+def fetch_page(url):
+    """Fetch the HTML content of a page."""
+    response = requests.get(url)
+    response.raise_for_status()
+    return BeautifulSoup(response.content, 'html.parser')
+
+def extract_chapters(url):
+    """Extract the story title and chapters list from the story URL."""
+    soup = fetch_page(url)
     title = " ".join(soup.title.text.split('|')[0].split())
-    temp = None
-    for element in soup.select('script'):
-        if "window.chapters" in element.text:
-            for line in element.text.split('\n'):
+
+    for script in soup.select('script'):
+        if "window.chapters" in script.text:
+            for line in script.text.split('\n'):
                 if "window.chapters" in line:
-                    temp = " ".join(line.split())
+                    chapters_data = line.replace("window.chapters = ", "").strip(";")
+                    chapters = json.loads(chapters_data)
+                    return title, chapters
 
-    if temp is None:
-        print("No page found.")
-        exit(1)
-    return [json.loads(dic) for dic in ['{'+r+'}' for r in temp.replace("window.chapters = ", "")[2:-3].split("},{")]]
+    raise ValueError("Chapters not found on the page.")
 
-def convertList(chapter_list, num_chapters):    
-    count = 0
-
-    for chapter in chapter_list:
+def process_chapters(chapter_list, num_chapters):
+    """Process and clean the specified number of chapters."""
+    processed_chapters = []
+    for count, chapter in enumerate(chapter_list):
         if count >= num_chapters:
             break
-        page = getPage(f"{rr}{chapter['url']}")
         
-        for tag in tagRemove:
-            for item in page.findAll(tag):
-                item.replaceWithChildren()
+        page = fetch_page(f"{BASE_URL}{chapter['url']}")
+        for tag in TAG_REMOVE:
+            for element in page.find_all(tag):
+                element.unwrap()
         
-        con = page.find("div", class_="chapter-inner chapter-content")
-        for item in con.findAll("div"):
-            item.replaceWithChildren()
-        stripped_con = [line for line in con.contents if line is not None]
-        str_con = ''.join(str(line) for line in stripped_con)
-        for item in replaceList:
-            str_con = str_con.replace(item[0], item[1])
+        content_div = page.find("div", class_="chapter-inner chapter-content")
+        if not content_div:
+            continue
+        
+        for div in content_div.find_all("div"):
+            div.unwrap()
+        
+        raw_content = ''.join(str(item) for item in content_div.contents if item)
+        for old, new in REPLACE_LIST:
+            raw_content = raw_content.replace(old, new)
+        
+        chapter["chapter_content"] = raw_content
+        processed_chapters.append(chapter)
+    return processed_chapters
 
-        chapter["chapter_content"] = str_con
-        count += 1
-
-    return chapter_list
-
-def createLaTeX(chapter_list, num_chapters, pdfTitle):
-    latex = [t.replace("TITLE", title) for t in np.loadtxt("latex_template.tex", dtype=str)]
-    count = 0
-    for chapter in chapter_list:
-        if count >= num_chapters:
-            break
-        latex.insert(-1, f'\\section*{{{chapter["title"]}}}\n\\addcontentsline{{toc}}{{section}}{{\\protect\\numberline{{}}{chapter["title"]}}}%')
-        latex.insert(-1, f'{chapter["chapter_content"]}\n')
-        count += 1
+def generate_latex(chapter_list, title):
+    """Generate a LaTeX file from the processed chapters."""
+    template = np.loadtxt("latex_template.tex", dtype=str)
+    latex = [line.replace("TITLE", title) for line in template]
     
-    file = open(f"{title}.tex", 'w')
-    for line in latex:
-        file.write(line+'\n')
-    file.close()
+    for chapter in chapter_list:
+        latex_section = (
+            f'\\section*{{{chapter["title"]}}}\n'
+            f'\\addcontentsline{{toc}}{{section}}{{{chapter["title"]}}}\n'
+            f'{chapter["chapter_content"]}\n'
+        )
+        latex.insert(-1, latex_section)
+    
+    tex_file = f"{title}.tex"
+    with open(tex_file, 'w', encoding='utf-8') as file:
+        file.write("\n".join(latex))
+    
+    return tex_file
 
-def createPDF(filename):
-    subprocess.run(['pdflatex', '-interaction=nonstopmode', f'{filename}.tex'])
-    subprocess.run('rm *out *aux *log', shell=True)
+def compile_pdf(tex_file):
+    """Compile a LaTeX file into a PDF."""
+    subprocess.run(['pdflatex', '-interaction=nonstopmode', tex_file], check=True)
+    subprocess.run(['rm', '-f', '*.aux', '*.log', '*.out'], shell=True)
 
-args = sys.argv
-if len(args) < 2:
-    print("Usage: python3 scrape.py [-l] [-c] <url> [pdf-title] [num chapters]")
-    print("\n    -l    Declare PDF output file name.")
-    print("    -c    Configure number of chapters scraped.")
-    exit(1)
+def parse_arguments():
+    """Parse command-line arguments using argparse."""
+    parser = argparse.ArgumentParser(description="Scrape and convert Royal Road stories to PDF.")
+    parser.add_argument("url", help="The URL of the story on Royal Road.")
+    parser.add_argument("-l", "--title", help="Specify the title for the PDF output.")
+    parser.add_argument("-c", "--chapters", type=int, help="Number of chapters to scrape (default: all).", default=None)
+    return parser.parse_args()
 
+def main():
+    args = parse_arguments()
+    url = args.url
+    title, chapters = extract_chapters(url)
+    
+    # Use the provided title or fallback to the story title
+    if args.title:
+        title = args.title
+    
+    # Use the specified number of chapters or all chapters
+    num_chapters = args.chapters or len(chapters)
+    processed_chapters = process_chapters(chapters, num_chapters)
+    
+    # Generate LaTeX and compile PDF
+    tex_file = generate_latex(processed_chapters, title)
+    compile_pdf(tex_file)
 
-num_chap = 0
-rr = "https://www.royalroad.com"
-tagRemove = ["p", "span", "em", "hr", "a"]
-replaceList = [["$", "\\$"], ["\u200b", ""], [u"\xa0", ""], ["\n", "\\par\n"], ["%", "\\%"], ["#", "\\#"], ["&", "\\&"], 
-               ["<strong>", "\\textbf{"], ["</strong>", "}"], ["<sup>", "$^{"], ["</sup>", "}$"], 
-               ["\\&gt;", "\\textgreater"], ["\\&lt;", "\\textless"], 
-               ["The author\'s content has been appropriated; report any instances of this story on Amazon.", ""], 
-               ["Taken from Royal Road, this narrative should be reported if found on Amazon.", ""]]
-
-if len(args) == 2:
-    url = args[1]
-elif len(args) == 4:
-    url = args[3]
-elif len(args) == 6:
-    url = args[3]
-
-temp = getList(url)
-num_chap = len(temp)
-if len(args) == 4 and args[1] == "-l":
-    title = str(args[-1])
-elif len(args) == 4 and args[1] == "-c":
-    num_chap = int(args[-1])
-elif len(args) == 6 and args[1] == "-l" and args[2] == "-c":
-    title = str(args[-2])
-    num_chap = int(args[-1])
-
-chapter_list = convertList(temp, num_chap)
-print(chapter_list)
-createLaTeX(chapter_list, num_chap, title)
-createPDF(title)
+if __name__ == "__main__":
+    main()
