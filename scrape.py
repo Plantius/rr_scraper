@@ -28,7 +28,8 @@ def extract_chapters(url):
     """Extract the story title and chapters list from the story URL."""
     soup = fetch_page(url)
     title = " ".join(soup.title.text.split('|')[0].split())
-
+    for old, new in REPLACE_LIST:
+            title = title.replace(old, new)
     for script in soup.select('script'):
         if "window.chapters" in script.text:
             for line in script.text.split('\n'):
