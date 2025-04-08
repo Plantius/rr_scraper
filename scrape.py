@@ -6,7 +6,7 @@ import numpy as np
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.royalroad.com"
-TAG_REMOVE = ["p", "span", "em", "hr", "a", "br"]
+TAG_REMOVE = ["p", "span", "em", "hr", "a", "br", "img"]
 REPLACE_LIST = [
     ["$", "\\$"], ["\u200b", ""], [u"\xa0", ""], ["\n", "\\par\n"], 
     ["%", "\\%"], ["#", "\\#"], ["&", "\\&"], 
