@@ -6,7 +6,7 @@ import numpy as np
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.royalroad.com"
-TAG_REMOVE = ["p", "span", "em", "hr", "a"]
+TAG_REMOVE = ["p", "span", "em", "hr", "a", "br"]
 REPLACE_LIST = [
     ["$", "\\$"], ["\u200b", ""], [u"\xa0", ""], ["\n", "\\par\n"], 
     ["%", "\\%"], ["#", "\\#"], ["&", "\\&"], 
@@ -18,18 +18,21 @@ REPLACE_LIST = [
     ["Unauthorized usage: this narrative is on Amazon without the author’s consent. Report any sightings.", ""]
 ]
 
-def fetch_page(url):
+def replace_invalid_chars(content: str):
+    for old, new in REPLACE_LIST:
+            content = content.replace(old, new)
+    return content
+
+def fetch_page(url: str):
     """Fetch the HTML content of a page."""
     response = requests.get(url)
     response.raise_for_status()
     return BeautifulSoup(response.content, 'html.parser')
 
-def extract_chapters(url):
+def extract_chapters(url: str):
     """Extract the story title and chapters list from the story URL."""
     soup = fetch_page(url)
-    title = " ".join(soup.title.text.split('|')[0].split())
-    for old, new in REPLACE_LIST:
-            title = title.replace(old, new)
+    title = replace_invalid_chars(" ".join(soup.title.text.split('|')[0].split()))
     for script in soup.select('script'):
         if "window.chapters" in script.text:
             for line in script.text.split('\n'):
@@ -44,6 +47,7 @@ def process_chapters(chapter_list, num_chapters):
     """Process and clean the specified number of chapters."""
     processed_chapters = []
     for count, chapter in enumerate(chapter_list):
+        print(f"Processing {chapter['title']}")
         if count >= num_chapters:
             break
         
@@ -59,12 +63,11 @@ def process_chapters(chapter_list, num_chapters):
         for div in content_div.find_all("div"):
             div.unwrap()
         
-        raw_content = ''.join(str(item) for item in content_div.contents if item)
-        for old, new in REPLACE_LIST:
-            raw_content = raw_content.replace(old, new)
+        raw_content = replace_invalid_chars(''.join(str(item) for item in content_div.contents if item))
         
         chapter["chapter_content"] = raw_content
         processed_chapters.append(chapter)
+        print("Done processing.")
     return processed_chapters
 
 def generate_latex(chapter_list, title):
@@ -74,7 +77,7 @@ def generate_latex(chapter_list, title):
     
     for chapter in chapter_list:
         latex_section = (
-            f'\\section*{{{chapter["title"]}}}\n'
+            f'\\section*{{{replace_invalid_chars(chapter["title"])}}}\n'
             f'\\addcontentsline{{toc}}{{section}}{{{chapter["title"]}}}\n'
             f'{chapter["chapter_content"]}\n'
         )
