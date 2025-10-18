@@ -72,9 +72,11 @@ def extract_chapters(url: str):
         if script_tag is not None and title is not None:
             script_content = script_tag.string
             match = re.search(r"window\.chapters\s*=\s*(\[[\s\S]*?\]);", script_content)
-            if match:
-                chapters = json.loads(match.group(1))
-                return title.string, chapters
+            if match is None:
+                raise Exception("No chapters found.")
+
+            chapters = json.loads(match.group(1))
+            return title.string, chapters
     except Exception as e:
         logger.error(f"Chapters not found on {url}: {e}")
         return "", []
@@ -85,13 +87,15 @@ def process_chapters(chapter_list, num_chapters):
     processed_chapters = []
     for count, chapter in enumerate(chapter_list):
         print(f"Processing {chapter['title']}")
-        
+
         if count >= num_chapters:
             break
-
         page = fetch_page(f"{BASE_URL}{chapter['url']}")
-        
-        print(h.handle(page))
+        content = page.find("div", class_="chapter-content")
+        if content is None:
+            continue
+        text = h.handle(content.prettify())
+        processed_chapters.append(text)
         # for tag in TAG_REMOVE:
         #     for element in page.find_all(tag):
         #         element.unwrap()
@@ -171,10 +175,11 @@ def main():
     # Use the specified number of chapters or all chapters
     num_chapters = args.chapters or len(chapters)
     processed_chapters = process_chapters(chapters, num_chapters)
-
+    print(processed_chapters)
+    
     # Generate LaTeX and compile PDF
-    tex_file = generate_latex(processed_chapters, title)
-    compile_pdf(tex_file)
+    # tex_file = generate_latex(processed_chapters, title)
+    # compile_pdf(tex_file)
 
 
 if __name__ == "__main__":
