@@ -1,10 +1,16 @@
 import argparse
 import json
+import logging
+import re
 import subprocess
 
+import html2text
 import numpy as np
 import requests
 from bs4 import BeautifulSoup
+
+h = html2text.HTML2Text()
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.royalroad.com"
 TAG_REMOVE = ["p", "span", "em", "hr", "a", "br", "img"]
@@ -46,24 +52,32 @@ def replace_invalid_chars(content: str):
 
 def fetch_page(url: str):
     """Fetch the HTML content of a page."""
-    response = requests.get(url)
-    response.raise_for_status()
+    try:
+        response = requests.get(url)
+    except Exception as e:
+        logger.error(f"Cannot fetch {url}: {e}")
+        return None
     return BeautifulSoup(response.content, "html.parser")
 
 
 def extract_chapters(url: str):
     """Extract the story title and chapters list from the story URL."""
     soup = fetch_page(url)
-    title = replace_invalid_chars(" ".join(soup.title.text.split("|")[0].split()))
-    for script in soup.select("script"):
-        if "window.chapters" in script.text:
-            for line in script.text.split("\n"):
-                if "window.chapters" in line:
-                    chapters_data = line.replace("window.chapters = ", "").strip(";")
-                    chapters = json.loads(chapters_data)
-                    return title, chapters
+    if soup is None:
+        return "", []
 
-    raise ValueError("Chapters not found on the page.")
+    script_tag = soup.find("script", string=re.compile(r"window\.chapters\s*="))
+    title = soup.title
+    try:
+        if script_tag is not None and title is not None:
+            script_content = script_tag.string
+            match = re.search(r"window\.chapters\s*=\s*(\[[\s\S]*?\]);", script_content)
+            if match:
+                chapters = json.loads(match.group(1))
+                return title.string, chapters
+    except Exception as e:
+        logger.error(f"Chapters not found on {url}: {e}")
+        return "", []
 
 
 def process_chapters(chapter_list, num_chapters):
@@ -71,28 +85,31 @@ def process_chapters(chapter_list, num_chapters):
     processed_chapters = []
     for count, chapter in enumerate(chapter_list):
         print(f"Processing {chapter['title']}")
+        
         if count >= num_chapters:
             break
 
         page = fetch_page(f"{BASE_URL}{chapter['url']}")
-        for tag in TAG_REMOVE:
-            for element in page.find_all(tag):
-                element.unwrap()
+        
+        print(h.handle(page))
+        # for tag in TAG_REMOVE:
+        #     for element in page.find_all(tag):
+        #         element.unwrap()
 
-        content_div = page.find("div", class_="chapter-inner chapter-content")
-        if not content_div:
-            continue
+        # content_div = page.find("div", class_="chapter-inner chapter-content")
+        # if not content_div:
+        #     continue
 
-        for div in content_div.find_all("div"):
-            div.unwrap()
+        # for div in content_div.find_all("div"):
+        #     div.unwrap()
 
-        raw_content = replace_invalid_chars(
-            "".join(str(item) for item in content_div.contents if item)
-        )
+        # raw_content = replace_invalid_chars(
+        #     "".join(str(item) for item in content_div.contents if item)
+        # )
 
-        chapter["chapter_content"] = raw_content
-        processed_chapters.append(chapter)
-        print("Done processing.")
+        # chapter["chapter_content"] = raw_content
+        # processed_chapters.append(chapter)
+        # print("Done processing.")
     return processed_chapters
 
 
