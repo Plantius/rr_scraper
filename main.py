@@ -2,10 +2,8 @@ import argparse
 import json
 import logging
 import re
-import subprocess
 
 import html2text
-import numpy as np
 import requests
 from bs4 import BeautifulSoup
 
@@ -13,41 +11,6 @@ h = html2text.HTML2Text()
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.royalroad.com"
-TAG_REMOVE = ["p", "span", "em", "hr", "a", "br", "img"]
-REPLACE_LIST = [
-    ["$", "\\$"],
-    ["\u200b", ""],
-    ["\xa0", ""],
-    ["\n", "\\par\n"],
-    ["%", "\\%"],
-    ["#", "\\#"],
-    ["&", "\\&"],
-    ["_", "\\textunderscore"],
-    ["<strong>", "\\textbf{"],
-    ["</strong>", "}"],
-    ["<sup>", "$^{"],
-    ["</sup>", "}$"],
-    ["\\&gt;", "\\textgreater"],
-    ["\\&lt;", "\\textless"],
-    [
-        "The author's content has been appropriated; report any instances of this story on Amazon.",
-        "",
-    ],
-    [
-        "Taken from Royal Road, this narrative should be reported if found on Amazon.",
-        "",
-    ],
-    [
-        "Unauthorized usage: this narrative is on Amazon without the author’s consent. Report any sightings.",
-        "",
-    ],
-]
-
-
-def replace_invalid_chars(content: str):
-    for old, new in REPLACE_LIST:
-        content = content.replace(old, new)
-    return content
 
 
 def fetch_page(url: str):
@@ -85,81 +48,93 @@ def extract_chapters(url: str):
 def process_chapters(chapter_list, num_chapters):
     """Process and clean the specified number of chapters."""
     processed_chapters = []
+    chapter_titles = []
+
     for count, chapter in enumerate(chapter_list):
         print(f"Processing {chapter['title']}")
 
         if count >= num_chapters:
             break
         page = fetch_page(f"{BASE_URL}{chapter['url']}")
-        content = page.find("div", class_="chapter-content")
-        if content is None:
+        if page is None:
             continue
-        text = h.handle(content.prettify())
+
+        soup = page.find("div", class_="chapter-content")
+        if soup is None:
+            continue
+
+        text = h.handle(soup.prettify())
+        text = f"## {chapter['title']}\n\n" + text
         processed_chapters.append(text)
-        # for tag in TAG_REMOVE:
-        #     for element in page.find_all(tag):
-        #         element.unwrap()
+        chapter_titles.append(chapter["title"])
 
-        # content_div = page.find("div", class_="chapter-inner chapter-content")
-        # if not content_div:
-        #     continue
+    toc_lines = ["## Table of Contents\n"]
+    for title in chapter_titles:
+        anchor = title.lower().replace(" ", "-")
+        toc_lines.append(f"- [{title}](#{anchor})")
 
-        # for div in content_div.find_all("div"):
-        #     div.unwrap()
-
-        # raw_content = replace_invalid_chars(
-        #     "".join(str(item) for item in content_div.contents if item)
-        # )
-
-        # chapter["chapter_content"] = raw_content
-        # processed_chapters.append(chapter)
-        # print("Done processing.")
-    return processed_chapters
+    toc = "\n".join(toc_lines)
+    return processed_chapters, toc
 
 
-def generate_latex(chapter_list, title):
-    """Generate a LaTeX file from the processed chapters."""
-    template = np.loadtxt("latex_template.tex", dtype=str)
-    latex = [line.replace("TITLE", title) for line in template]
-
-    for chapter in chapter_list:
-        latex_section = (
-            f"\\section*{{{replace_invalid_chars(chapter['title'])}}}\n"
-            f"\\addcontentsline{{toc}}{{section}}{{{chapter['title']}}}\n"
-            f"{chapter['chapter_content']}\n"
+def generate_index(chapters: list[str], num_chapters: int) -> str:
+    """
+    Generate a Markdown index (table of contents) linking to all chapter titles.
+    """
+    index_lines = ["## Table of Contents\n"]
+    for i in range(min(num_chapters, len(chapters))):
+        # Try to extract a title from the chapter text (first line)
+        lines = chapters[i].splitlines()
+        title = next(
+            (
+                line.strip("# ").strip()
+                for line in lines
+                if line.strip().startswith("#")
+            ),
+            f"Chapter {i + 1}",
         )
-        latex.insert(-1, latex_section)
-
-    tex_file = f"{title}.tex"
-    with open(tex_file, "w", encoding="utf-8") as file:
-        file.write("\n".join(latex))
-
-    return tex_file
+        # Create an internal markdown link anchor (GitHub-style)
+        anchor = title.lower().replace(" ", "-")
+        index_lines.append(f"- [{title}](#{anchor})")
+    return "\n".join(index_lines)
 
 
-def compile_pdf(tex_file: str):
-    """Compile a LaTeX file into a PDF."""
-    file_name = tex_file.split(".")[0]
-    subprocess.run(["pdflatex", "-interaction=nonstopmode", tex_file], check=True)
-    subprocess.run(
-        ["rm", "-f", f"{file_name}.aux", f"{file_name}.log", f"{file_name}.out"]
-    )
+def save_as_markdown(processed_chapters: list[str], output_path: str = "book.md"):
+    """Combine all chapters into a single markdown file."""
+    content = "\n\n---\n\n".join(processed_chapters)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"File saved to {output_path}")
 
 
 def parse_arguments():
     """Parse command-line arguments using argparse."""
     parser = argparse.ArgumentParser(
-        description="Scrape and convert Royal Road stories to PDF."
+        description="Scrape and convert Royal Road stories to PDF or Markdown."
     )
     parser.add_argument("url", help="The URL of the story on Royal Road.")
-    parser.add_argument("-l", "--title", help="Specify the title for the PDF output.")
+    parser.add_argument("-t", "--title", help="Specify the title for the output file.")
     parser.add_argument(
         "-c",
         "--chapters",
         type=int,
-        help="Number of chapters to scrape (default: all).",
         default=None,
+        help="Number of chapters to scrape (default: all).",
     )
+    parser.add_argument(
+        "-m",
+        "--markdown",
+        type=bool,
+        default=True,
+        help="Save output as a Markdown file (.md).",
+    )
+    # parser.add_argument(
+    #     "-p",
+    #     "--pdf",
+    #     action="store_true",
+    #     default=False,
+    #     help="Save output as a PDF file (.pdf).",
+    # )
     return parser.parse_args()
 
 
@@ -174,12 +149,11 @@ def main():
 
     # Use the specified number of chapters or all chapters
     num_chapters = args.chapters or len(chapters)
-    processed_chapters = process_chapters(chapters, num_chapters)
-    print(processed_chapters)
-    
-    # Generate LaTeX and compile PDF
-    # tex_file = generate_latex(processed_chapters, title)
-    # compile_pdf(tex_file)
+    processed_chapters, toc = process_chapters(chapters, num_chapters)
+    full_content = [f"# {title}", toc, *processed_chapters]
+
+    if args.markdown:
+        save_as_markdown(full_content, f"{title}.md")
 
 
 if __name__ == "__main__":
