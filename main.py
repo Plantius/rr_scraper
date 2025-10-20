@@ -2,13 +2,16 @@ import argparse
 import json
 import logging
 import re
+from pathlib import Path
 
 import html2text
 import requests
 from bs4 import BeautifulSoup
+from markdown_pdf import MarkdownPdf, Section
 
 h = html2text.HTML2Text()
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 BASE_URL = "https://www.royalroad.com"
 
@@ -62,49 +65,88 @@ def process_chapters(chapter_list, num_chapters):
         soup = page.find("div", class_="chapter-content")
         if soup is None:
             continue
-
+        slug = chapter["slug"]
+        title = chapter["title"]
         text = h.handle(soup.prettify())
-        text = f"## {chapter['title']}\n\n" + text
+
+        text = f'<a id="{slug}"></a>\n\n## {title}\n\n{text}'
+
         processed_chapters.append(text)
-        chapter_titles.append(chapter["title"])
+        chapter_titles.append((title, slug))
 
     toc_lines = ["## Table of Contents\n"]
-    for title in chapter_titles:
-        anchor = title.lower().replace(" ", "-")
-        toc_lines.append(f"- [{title}](#{anchor})")
+    for title, slug in chapter_titles:
+        toc_lines.append(f"- [{title}](#{slug})")
 
     toc = "\n".join(toc_lines)
     return processed_chapters, toc
 
 
-def generate_index(chapters: list[str], num_chapters: int) -> str:
-    """
-    Generate a Markdown index (table of contents) linking to all chapter titles.
-    """
-    index_lines = ["## Table of Contents\n"]
-    for i in range(min(num_chapters, len(chapters))):
-        # Try to extract a title from the chapter text (first line)
-        lines = chapters[i].splitlines()
-        title = next(
-            (
-                line.strip("# ").strip()
-                for line in lines
-                if line.strip().startswith("#")
-            ),
-            f"Chapter {i + 1}",
-        )
-        # Create an internal markdown link anchor (GitHub-style)
-        anchor = title.lower().replace(" ", "-")
-        index_lines.append(f"- [{title}](#{anchor})")
-    return "\n".join(index_lines)
-
-
 def save_as_markdown(processed_chapters: list[str], output_path: str = "book.md"):
     """Combine all chapters into a single markdown file."""
-    content = "\n\n---\n\n".join(processed_chapters)
+    content: str = "\n\n---\n\n".join(processed_chapters)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"File saved to {output_path}")
+    logger.info(f"Markdown file saved to {output_path}")
+
+
+def embed_images_locally(markdown_text: str, img_dir: str = "images") -> str:
+    """Download all remote images and replace URLs with local paths."""
+    Path(img_dir).mkdir(exist_ok=True)
+    pattern = re.compile(r"!\[[^\]]*\]\((https?://[^\)]+)\)")
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/118.0.5993.70 Safari/537.36"
+        )
+    }
+
+    for match in pattern.finditer(markdown_text):
+        url = match.group(1)
+        filename = Path(img_dir) / Path(url.split("/")[-1].split("?")[0])
+
+        if not filename.exists():
+            try:
+                r = requests.get(url, headers=headers)
+                if r.status_code == 200:
+                    with open(filename, "wb") as f:
+                        f.write(r.content)
+            except Exception as e:
+                logger.error(f"Coumsg=ld not download image {url}: {e}")
+                continue
+
+        markdown_text = markdown_text.replace(url, str(filename))
+    return markdown_text
+
+
+def save_as_pdf(processed_chapters: list[str], output_path: str = "book.pdf"):
+    """Convert a list of markdown strings to a PDF using the markdown-pdf Python package."""
+
+    pdf = MarkdownPdf()
+    combined_md = "\n\n---\n\n".join(processed_chapters)
+    combined_md = embed_images_locally(combined_md)
+
+    pdf.add_section(Section(combined_md))
+    pdf.save(output_path)
+
+    logger.info(f"PDF file saved to {output_path}")
+
+
+def convert_md_to_pdf(input_file: str, output_file: str | None = None):
+    """Convert an existing Markdown file to a PDF."""
+    input_path = Path(input_file)
+    if not input_path.exists():
+        logger.error(f"File {input_path} does not exist.")
+        return
+
+    output_path = Path(output_file) if output_file else input_path.with_suffix(".pdf")
+
+    pdf = MarkdownPdf()
+    input_text = embed_images_locally(input_path.read_text(encoding="utf-8"))
+    pdf.add_section(Section(input_text))
+    pdf.save(output_path)
+    logger.info(f"PDF file saved to {output_path}")
 
 
 def parse_arguments():
@@ -112,48 +154,66 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description="Scrape and convert Royal Road stories to PDF or Markdown."
     )
-    parser.add_argument("url", help="The URL of the story on Royal Road.")
-    parser.add_argument("-t", "--title", help="Specify the title for the output file.")
-    parser.add_argument(
+
+    subparsers = parser.add_subparsers(dest="command", required=False)
+
+    scrape_parser = subparsers.add_parser(
+        "scrape", help="Scrape a Royal Road story into Markdown or PDF."
+    )
+    scrape_parser.add_argument("url", help="The URL of the story on Royal Road.")
+    scrape_parser.add_argument(
+        "-t", "--title", help="Specify the title for the output file."
+    )
+    scrape_parser.add_argument(
         "-c",
         "--chapters",
         type=int,
         default=None,
         help="Number of chapters to scrape (default: all).",
     )
-    parser.add_argument(
+    scrape_parser.add_argument(
         "-m",
         "--markdown",
         type=bool,
         default=True,
         help="Save output as a Markdown file (.md).",
     )
-    # parser.add_argument(
-    #     "-p",
-    #     "--pdf",
-    #     action="store_true",
-    #     default=False,
-    #     help="Save output as a PDF file (.pdf).",
-    # )
+    scrape_parser.add_argument(
+        "-p",
+        "--pdf",
+        action="store_true",
+        help="Save output as a PDF file (.pdf).",
+    )
+
+    convert_parser = subparsers.add_parser(
+        "convert", help="Convert an existing Markdown file to PDF."
+    )
+    convert_parser.add_argument("input", help="Path to the Markdown file.")
+    convert_parser.add_argument(
+        "-o", "--output", help="Output PDF file name.", default=None
+    )
+
     return parser.parse_args()
 
 
 def main():
     args = parse_arguments()
-    url = args.url
-    title, chapters = extract_chapters(url)
 
-    # Use the provided title or fallback to the story title
+    if args.command == "convert":
+        convert_md_to_pdf(args.input, args.output)
+        return
+
+    title, chapters = extract_chapters(args.url)
     if args.title:
         title = args.title
-
-    # Use the specified number of chapters or all chapters
     num_chapters = args.chapters or len(chapters)
     processed_chapters, toc = process_chapters(chapters, num_chapters)
     full_content = [f"# {title}", toc, *processed_chapters]
 
     if args.markdown:
         save_as_markdown(full_content, f"{title}.md")
+    if args.pdf:
+        save_as_pdf(full_content, f"{title}.pdf")
 
 
 if __name__ == "__main__":
