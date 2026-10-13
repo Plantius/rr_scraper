@@ -3,5 +3,6 @@ __pycache__
 .venv
 .vscode
 scraped_books
-chapters
+chapters*
+old_chapters
 images

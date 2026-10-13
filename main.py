@@ -19,8 +19,9 @@ logging.basicConfig(
 
 BASE_URL = "https://www.royalroad.com"
 REQUEST_TIMEOUT = 15
-CHAPTER_DELAY = 0.5
-PDF_BATCH_SIZE = 25
+CHAPTER_DELAY = 1.0
+PDF_BATCH_SIZE = 50
+INDEX_FILE = "index.json"
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -28,6 +29,64 @@ HEADERS = {
         "Chrome/118.0.5993.70 Safari/537.36"
     )
 }
+
+
+def slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def chapter_key(chapter) -> str:
+    return str(chapter.get("id") or chapter["slug"])
+
+
+def chapter_filename(key: str, slug: str) -> str:
+    """Stable filename, independent of position."""
+    return f"{key}-{slug}.md"
+
+
+def load_index(cache_path: Path):
+    index_file = cache_path / INDEX_FILE
+    if not index_file.exists():
+        return []
+    try:
+        return json.loads(index_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.error(f"Could not read {index_file}: {e}")
+        return []
+
+
+def merge_with_cache(chapter_list, old_entries):
+    """
+    Merge the online chapter list with the cached index. Chapters cached
+    earlier but no longer online are kept, placed after the nearest preceding
+    chapter that still exists. Returns [(position, entry)], where position is
+    the online index (or the anchor's index for deleted ones, -1 if at start).
+    """
+    online_keys = {chapter_key(c) for c in chapter_list}
+    deleted, anchor = {}, None
+    for e in old_entries:
+        if e["key"] in online_keys:
+            anchor = e["key"]
+        else:
+            deleted.setdefault(anchor, []).append(e)
+
+    merged = [(-1, e) for e in deleted.get(None, [])]
+    for i, c in enumerate(chapter_list):
+        key = chapter_key(c)
+        merged.append(
+            (
+                i,
+                {
+                    "key": key,
+                    "title": c["title"],
+                    "slug": c["slug"],
+                    "file": chapter_filename(key, c["slug"]),
+                    "url": c["url"],  # present only for chapters still online
+                },
+            )
+        )
+        merged.extend((i, e) for e in deleted.get(key, []))
+    return merged
 
 
 def fetch_page(url: str):
@@ -65,56 +124,67 @@ def extract_chapters(url: str):
     return "", []
 
 
-def chapter_filename(index: int, slug: str) -> str:
-    """Deterministic, sortable filename for a single chapter."""
-    return f"{index:05d}-{slug}.md"
-
-
 def scrape_chapters(chapter_list, num_chapters, cache_dir: str = "chapters"):
     """
-    Fetch chapters one at a time and write each to its own file in cache_dir
-    as soon as it's scraped. Chapters already present on disk are skipped,
-    so an interrupted run can simply be re-launched to resume.
+    Fetch chapters one at a time and cache each to its own file. Cached
+    chapters are skipped, so interrupted runs resume. Chapters cached earlier
+    but since deleted online are retained in their original position.
 
-    Returns the ordered list of (title, slug, filepath) for all chapters
-    that exist on disk after this run (previously cached + newly scraped).
+    Returns the ordered list of (title, slug, filepath).
     """
     cache_path = Path(cache_dir)
     cache_path.mkdir(exist_ok=True)
 
+    merged = merge_with_cache(chapter_list, load_index(cache_path))
     manifest = []
 
-    for index, chapter in enumerate(chapter_list):
-        if index >= num_chapters:
-            break
+    try:
+        for position, entry in merged:
+            if position >= num_chapters:
+                continue
 
-        slug = chapter["slug"]
-        title = chapter["title"]
-        filepath = cache_path / chapter_filename(index, slug)
+            title, slug = entry["title"], entry["slug"]
+            filepath = cache_path / entry["file"]
 
-        if filepath.exists():
-            logger.info(f"Skipping '{title}' (already cached)")
+            if filepath.exists():
+                note = "" if entry.get("url") else ", deleted online"
+                logger.info(f"Skipping '{title}' (already cached{note})")
+                manifest.append((title, slug, filepath))
+                continue
+
+            if not entry.get("url"):
+                logger.warning(f"Cached file for deleted chapter '{title}' is missing")
+                continue
+
+            logger.info(f"Processing {title}")
+            page = fetch_page(f"{BASE_URL}{entry['url']}")
+            if page is None:
+                logger.warning(f"Skipping chapter '{title}' (fetch failed)")
+                continue
+
+            soup = page.find("div", class_="chapter-content")
+            if soup is None:
+                logger.warning(f"Skipping chapter '{title}' (content not found)")
+                continue
+
+            text = h.handle(soup.prettify())
+            text = f'<a id="{slug}"></a>\n\n## {title}\n\n{text}'
+
+            filepath.write_text(text, encoding="utf-8")
             manifest.append((title, slug, filepath))
-            continue
 
-        logger.info(f"Processing {title}")
-        page = fetch_page(f"{BASE_URL}{chapter['url']}")
-        if page is None:
-            logger.warning(f"Skipping chapter '{title}' (fetch failed)")
-            continue
-
-        soup = page.find("div", class_="chapter-content")
-        if soup is None:
-            logger.warning(f"Skipping chapter '{title}' (content not found)")
-            continue
-
-        text = h.handle(soup.prettify())
-        text = f'<a id="{slug}"></a>\n\n## {title}\n\n{text}'
-
-        filepath.write_text(text, encoding="utf-8")
-        manifest.append((title, slug, filepath))
-
-        time.sleep(CHAPTER_DELAY)
+            time.sleep(CHAPTER_DELAY)
+    finally:
+        # Persist order of everything on disk (incl. entries beyond the
+        # --chapters limit) so deleted chapters keep their position next run.
+        index = [
+            {k: v for k, v in e.items() if k != "url"}
+            for _, e in merged
+            if (cache_path / e["file"]).exists()
+        ]
+        (cache_path / INDEX_FILE).write_text(
+            json.dumps(index, indent=2), encoding="utf-8"
+        )
 
     return manifest
 
@@ -261,8 +331,8 @@ def parse_arguments():
     )
     scrape_parser.add_argument(
         "--cache-dir",
-        default="chapters",
-        help="Directory to store per-chapter files for caching/resuming (default: chapters).",
+        default=None,
+        help="Directory to store per-chapter files for caching/resuming (default: chapters/<story-title>).",
     )
     scrape_parser.add_argument(
         "--batch-size",
@@ -296,6 +366,8 @@ def main():
         return
 
     title, chapters = extract_chapters(args.url)
+    cache_dir = args.cache_dir or str(Path("chapters") / slugify(title))
+
     if not title or not chapters:
         logger.error("Failed to extract story title/chapters. Aborting.")
         return
@@ -304,7 +376,7 @@ def main():
         title = args.title
     num_chapters = args.chapters or len(chapters)
 
-    manifest = scrape_chapters(chapters, num_chapters, cache_dir=args.cache_dir)
+    manifest = scrape_chapters(chapters, num_chapters, cache_dir=cache_dir)
     if not manifest:
         logger.error("No chapters were successfully scraped. Aborting.")
         return
