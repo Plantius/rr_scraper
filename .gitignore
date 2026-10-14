@@ -1,8 +1,9 @@
-*.pdf
-__pycache__
-.venv
-.vscode
+__pycache__/
+.venv/
+chapters/
+old_chapters/
+images/
 scraped_books
-chapters*
-old_chapters
-images
+*.md
+*.md.gz
+*.pdf
